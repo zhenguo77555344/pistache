@@ -160,15 +160,15 @@ private:
     size_t maxConnectionsPerHost;
 };
 
-class Transport : public Aio::Handler {
+class Transport : public Io::Handler {
 public:
 
-    PROTOTYPE_OF(Aio::Handler, Transport)
+    PROTOTYPE_OF(Io::Handler, Transport)
 
     typedef std::function<void()> OnResponseParsed;
 
-    void onReady(const Aio::FdSet& fds);
-    void registerPoller(Polling::Epoll& poller);
+    void onReady(const Io::FdSet& fds);
+    void registerPoller(Io::Polling::Poller& poller);
 
     Async::Promise<void>
     asyncConnect(const std::shared_ptr<Connection>& connection, const struct sockaddr* address, socklen_t addr_len);
@@ -330,11 +330,11 @@ public:
    void shutdown();
 
 private:
-   std::shared_ptr<Aio::Reactor> reactor_;
+   std::shared_ptr<Io::Reactor> reactor_;
 
    ConnectionPool pool;
    std::shared_ptr<Transport> transport_;
-   Aio::Reactor::Key transportKey;
+   Io::Reactor::Key transportKey;
 
    std::atomic<uint64_t> ioIndex;
 

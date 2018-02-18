@@ -15,7 +15,7 @@
 #include <unistd.h>
 
 #include <pistache/common.h>
-#include <pistache/os.h>
+#include <pistache/io/poller.h>
 
 namespace Pistache {
 
@@ -75,8 +75,8 @@ public:
         return event_fd != -1;
     }
 
-    Polling::Tag bind(Polling::Epoll& poller) {
-        using namespace Polling;
+    Io::Polling::Tag bind(Io::Polling::Poller& poller) {
+        using namespace Io::Polling;
 
         if (isBound()) {
             throw std::runtime_error("The mailbox has already been bound");
@@ -121,14 +121,14 @@ public:
 
     }
 
-    Polling::Tag tag() const {
+    Io::Polling::Tag tag() const {
         if (!isBound())
             throw std::runtime_error("Can not retrieve tag of an unbound mailbox");
 
-        return Polling::Tag(event_fd);
+        return Io::Polling::Tag(event_fd);
     }
 
-    void unbind(Polling::Epoll& poller) {
+    void unbind(Io::Polling::Poller& poller) {
         if (event_fd == -1) {
             throw std::runtime_error("The mailbox is not bound");
         }
@@ -245,8 +245,8 @@ public:
         return event_fd != -1;
     }
 
-    Polling::Tag bind(Polling::Epoll& poller) {
-        using namespace Polling;
+    Io::Polling::Tag bind(Io::Polling::Poller& poller) {
+        using namespace Io::Polling;
 
         if (isBound()) {
             throw std::runtime_error("The queue has already been bound");
@@ -289,14 +289,14 @@ public:
 
     }
 
-    Polling::Tag tag() const {
+    Io::Polling::Tag tag() const {
         if (!isBound())
             throw std::runtime_error("Can not retrieve tag of an unbound mailbox");
 
-        return Polling::Tag(event_fd);
+        return Io::Polling::Tag(event_fd);
     }
 
-    void unbind(Polling::Epoll& poller) {
+    void unbind(Io::Polling::Poller& poller) {
         if (event_fd == -1) {
             throw std::runtime_error("The mailbox is not bound");
         }

@@ -4,10 +4,24 @@
    Implementation of the Reactor
 */
 
+#include <memory>
+
 #include <pistache/reactor.h>
+#include <pistache/io/poller.h>
+#include <pistache/io/epoll.h>
 
 namespace Pistache {
-namespace Aio {
+namespace Io {
+
+namespace 
+{
+    std::unique_ptr<Polling::Poller> makePoller()
+    {
+        // @Incomplete @Major Use the right Poller implementation depending on the operating system
+        return std::unique_ptr<Polling::Poller> (new Polling::Epoll);
+        //return std::make_unique<Polling::Epoll>();
+    }
+}
 
 struct Reactor::Impl {
 
@@ -62,16 +76,15 @@ struct SyncImpl : public Reactor::Impl {
         , handlers_()
         , shutdown_()
         , shutdownFd()
-        , poller()
     {
-        shutdownFd.bind(poller);
+        poller = makePoller();
+        shutdownFd.bind(*poller);
     }
 
     Reactor::Key addHandler(
             const std::shared_ptr<Handler>& handler, bool setKey = true) {
 
-        handler->registerPoller(poller);
-
+        handler->registerPoller(*poller);
         handler->reactor_ = reactor_;
 
         auto key = handlers_.add(handler);
@@ -99,7 +112,7 @@ struct SyncImpl : public Reactor::Impl {
             Polling::Mode mode = Polling::Mode::Level) {
 
         auto pollTag = encodeTag(key, tag);
-        poller.addFd(fd, interest, pollTag, mode);
+        poller->addFd(fd, interest, pollTag, mode);
     }
 
     void registerFdOneShot(
@@ -110,7 +123,7 @@ struct SyncImpl : public Reactor::Impl {
             Polling::Mode mode = Polling::Mode::Level) {
 
         auto pollTag = encodeTag(key, tag);
-        poller.addFdOneShot(fd, interest, pollTag, mode);
+        poller->addFdOneShot(fd, interest, pollTag, mode);
     }
 
     void modifyFd(
@@ -121,7 +134,7 @@ struct SyncImpl : public Reactor::Impl {
             Polling::Mode mode = Polling::Mode::Level) {
 
         auto pollTag = encodeTag(key, tag);
-        poller.rearmFd(fd, interest, pollTag, mode);
+        poller->rearmFd(fd, interest, pollTag, mode);
     }
 
     void runOnce() {
@@ -133,7 +146,7 @@ struct SyncImpl : public Reactor::Impl {
         for (;;) {
             std::vector<Polling::Event> events;
             int ready_fds;
-            switch (ready_fds = poller.poll(events, 1024, timeout)) {
+            switch (ready_fds = poller->poll(events, 1024, timeout)) {
                 case -1: break;
                 case 0: break;
                 default:
@@ -296,7 +309,7 @@ private:
     std::atomic<bool> shutdown_;
     NotifyFd shutdownFd;
 
-    Polling::Epoll poller;
+    std::unique_ptr<Polling::Poller> poller;
 };
 
 /* Asynchronous implementation of the reactor that spawns a number N of threads

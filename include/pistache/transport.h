@@ -7,6 +7,7 @@
 #pragma once
 
 #include <pistache/reactor.h>
+#include <pistache/io/poller.h>
 #include <pistache/mailbox.h>
 #include <pistache/optional.h>
 #include <pistache/async.h>
@@ -18,16 +19,16 @@ namespace Tcp {
 class Peer;
 class Handler;
 
-class Transport : public Aio::Handler {
+class Transport : public Io::Handler {
 public:
     Transport(const std::shared_ptr<Tcp::Handler>& handler);
 
     void init(const std::shared_ptr<Tcp::Handler>& handler);
 
-    void registerPoller(Polling::Epoll& poller);
+    void registerPoller(Io::Polling::Poller& poller);
 
     void handleNewPeer(const std::shared_ptr<Peer>& peer);
-    void onReady(const Aio::FdSet& fds);
+    void onReady(const Io::FdSet& fds);
 
     template<typename Buf>
     Async::Promise<ssize_t> asyncWrite(Fd fd, const Buf& buffer, int flags = 0) {
@@ -76,7 +77,7 @@ public:
 
     void disarmTimer(Fd fd);
 
-    std::shared_ptr<Aio::Handler> clone() const;
+    std::shared_ptr<Io::Handler> clone() const;
 
 private:
     enum WriteStatus {
@@ -223,17 +224,17 @@ private:
     std::unordered_map<Fd, std::shared_ptr<Peer>> peers;
 
     Async::Deferred<rusage> loadRequest_;
-    NotifyFd notifier;
+    Io::NotifyFd notifier;
 
     std::shared_ptr<Tcp::Handler> handler_;
 
     bool isPeerFd(Fd fd) const;
     bool isTimerFd(Fd fd) const;
-    bool isPeerFd(Polling::Tag tag) const;
-    bool isTimerFd(Polling::Tag tag) const;
+    bool isPeerFd(Io::Polling::Tag tag) const;
+    bool isTimerFd(Io::Polling::Tag tag) const;
 
     std::shared_ptr<Peer>& getPeer(Fd fd);
-    std::shared_ptr<Peer>& getPeer(Polling::Tag tag);
+    std::shared_ptr<Peer>& getPeer(Io::Polling::Tag tag);
 
     void
     armTimerMs(Fd fd,

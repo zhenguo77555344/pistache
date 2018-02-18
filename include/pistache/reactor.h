@@ -19,14 +19,16 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 
+#include <pistache/io/poller.h>
+#include <pistache/io/notify_fd.h>
+
 #include <pistache/flags.h>
 #include <pistache/os.h>
 #include <pistache/net.h>
 #include <pistache/prototype.h>
 
-
 namespace Pistache {
-namespace Aio {
+namespace Io {
 
 // A set of fds that are ready
 class FdSet {
@@ -204,7 +206,7 @@ public:
     };
 
     virtual void onReady(const FdSet& fds) = 0;
-    virtual void registerPoller(Polling::Epoll& poller) { }
+    virtual void registerPoller(Polling::Poller& poller) { }
 
     Reactor* reactor() const {
         return reactor_;
@@ -224,5 +226,5 @@ private:
     Reactor::Key key_;
 };
 
-} // namespace Aio
+} // namespace Io
 } // namespace Pistache

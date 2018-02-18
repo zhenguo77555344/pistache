@@ -1,11 +1,41 @@
-file (GLOB COMMON_SOURCE_FILES "common/*.cc")
-file (GLOB SERVER_SOURCE_FILES "server/*.cc")
-file (GLOB CLIENT_SOURCE_FILES "client/*.cc")
+set(COMMON_SOURCE_FILES
+    common/cookie.cc
+    common/description.cc
+    common/http_defs.cc
+    common/http_header.cc
+    common/http_headers.cc
+    common/http.cc
+    common/mime.cc
+    common/net.cc
+    common/os.cc
+    common/peer.cc
+    common/reactor.cc
+    common/stream.cc
+    common/tcp.cc
+    common/timer_pool.cc
+    common/transport.cc
+)
 
-file (GLOB INCLUDE_FILES ${PROJECT_SOURCE_DIR}/include/pistache/*h)
+set(IO_SOURCE_FILES
+    io/linux/epoll.cc
+    io/linux/notify_fd.cc
+)
+
+set(SERVER_SOURCE_FILES
+    server/endpoint.cc
+    server/listener.cc
+    server/router.cc
+)
+
+set(CLIENT_SOURCE_FILES
+    client/client.cc
+)
+
+file (GLOB_RECURSE INCLUDE_FILES ${PROJECT_SOURCE_DIR}/include/pistache/*h)
 
 set(SOURCE_FILES
     ${COMMON_SOURCE_FILES}
+    ${IO_SOURCE_FILES}
     ${SERVER_SOURCE_FILES}
     ${CLIENT_SOURCE_FILES}
     ${INCLUDE_FILES}

@@ -19,6 +19,9 @@
 #include <pistache/async.h>
 #include <pistache/reactor.h>
 
+#include <pistache/io/notify_fd.h>
+#include <pistache/io/epoll.h>
+
 namespace Pistache {
 namespace Tcp {
 
@@ -70,18 +73,19 @@ private:
     Address addr_; 
     int listen_fd;
     int backlog_;
-    NotifyFd shutdownFd;
-    Polling::Epoll poller;
+    Io::NotifyFd shutdownFd;
+    // @Todo @Cleanup should use the Reactor directly
+    Io::Polling::Epoll poller;
 
     Flags<Options> options_;
     std::unique_ptr<std::thread> acceptThread;
 
     size_t workers_;
     std::shared_ptr<Transport> transport_;
-    std::shared_ptr<Handler> handler_;
+    std::shared_ptr<Tcp::Handler> handler_;
 
-    std::shared_ptr<Aio::Reactor> reactor_;
-    Aio::Reactor::Key transportKey;
+    std::shared_ptr<Io::Reactor> reactor_;
+    Io::Reactor::Key transportKey;
 
     void handleNewConnection();
     void dispatchPeer(const std::shared_ptr<Peer>& peer);

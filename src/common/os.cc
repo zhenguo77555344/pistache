@@ -9,8 +9,6 @@
 
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
 
 #include <pistache/os.h>
 #include <pistache/common.h>
@@ -143,155 +141,9 @@ CpuSet::toPosix() const {
 
 namespace Polling {
 
-    Epoll::Epoll(size_t max) {
-       epoll_fd = TRY_RET(epoll_create(max));
-    }
 
-    void
-    Epoll::addFd(Fd fd, Flags<NotifyOn> interest, Tag tag, Mode mode) {
-        struct epoll_event ev;
-        ev.events = toEpollEvents(interest);
-        if (mode == Mode::Edge)
-            ev.events |= EPOLLET;
-        ev.data.u64 = tag.value_;
 
-        TRY(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev));
-    }
-
-    void
-    Epoll::addFdOneShot(Fd fd, Flags<NotifyOn> interest, Tag tag, Mode mode) {
-        struct epoll_event ev;
-        ev.events = toEpollEvents(interest);
-        ev.events |= EPOLLONESHOT;
-        if (mode == Mode::Edge)
-            ev.events |= EPOLLET;
-        ev.data.u64 = tag.value_;
-
-        TRY(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev));
-    }
-
-    void
-    Epoll::removeFd(Fd fd) {
-        struct epoll_event ev;
-        TRY(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &ev));
-    }
-
-    void
-    Epoll::rearmFd(Fd fd, Flags<NotifyOn> interest, Tag tag, Mode mode) {
-        struct epoll_event ev;
-        ev.events = toEpollEvents(interest);
-        if (mode == Mode::Edge)
-            ev.events |= EPOLLET;
-        ev.data.u64 = tag.value_;
-
-        TRY(epoll_ctl(epoll_fd, EPOLL_CTL_MOD, fd, &ev));
-    }
-
-    int
-    Epoll::poll(std::vector<Event>& events, size_t maxEvents, std::chrono::milliseconds timeout) const {
-        struct epoll_event evs[Const::MaxEvents];
-
-        int ready_fds = -1;
-        do {
-            ready_fds = epoll_wait(epoll_fd, evs, maxEvents, timeout.count());
-        } while (ready_fds < 0 && errno == EINTR);
-
-        if (ready_fds > 0) {
-            for (int i = 0; i < ready_fds; ++i) {
-                const struct epoll_event *ev = evs + i;
-
-                const Tag tag(ev->data.u64);
-
-                Event event(tag);
-                event.flags = toNotifyOn(ev->events);
-                events.push_back(event);
-            }
-        }
-
-        return ready_fds;
-    }
-
-    int
-    Epoll::toEpollEvents(Flags<NotifyOn> interest) const {
-        int events = 0;
-
-        if (interest.hasFlag(NotifyOn::Read))
-            events |= EPOLLIN;
-        if (interest.hasFlag(NotifyOn::Write))
-            events |= EPOLLOUT;
-        if (interest.hasFlag(NotifyOn::Hangup))
-            events |= EPOLLHUP;
-        if (interest.hasFlag(NotifyOn::Shutdown))
-            events |= EPOLLRDHUP;
-
-        return events;
-    }
-
-    Flags<NotifyOn>
-    Epoll::toNotifyOn(int events) const {
-        Flags<NotifyOn> flags;
-
-        if (events & EPOLLIN)
-            flags.setFlag(NotifyOn::Read);
-        if (events & EPOLLOUT)
-            flags.setFlag(NotifyOn::Write);
-        if (events & EPOLLHUP)
-            flags.setFlag(NotifyOn::Hangup);
-        if (events & EPOLLRDHUP) {
-            flags.setFlag(NotifyOn::Shutdown);
-        }
-
-        return flags;
-    }
 
 } // namespace Poller
-
-Polling::Tag
-NotifyFd::bind(Polling::Epoll& poller) {
-    event_fd = TRY_RET(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC));
-    Polling::Tag tag(event_fd);
-
-    poller.addFd(event_fd, Polling::NotifyOn::Read, tag, Polling::Mode::Edge);
-    return tag;
-}
-
-bool
-NotifyFd::isBound() const {
-    return event_fd != -1;
-}
-
-Polling::Tag
-NotifyFd::tag() const {
-    return Polling::Tag(event_fd);
-}
-
-void
-NotifyFd::notify() const {
-    if (!isBound())
-        throw std::runtime_error("Can not notify an unbound fd");
-    eventfd_t val = 1;
-    TRY(eventfd_write(event_fd, val));
-}
-
-void
-NotifyFd::read() const {
-    if (!isBound())
-        throw std::runtime_error("Can not read an unbound fd");
-    eventfd_t val;
-    TRY(eventfd_read(event_fd, &val));
-}
-
-bool
-NotifyFd::tryRead() const {
-    eventfd_t val;
-    int res = eventfd_read(event_fd, &val);
-    if (res == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return false;
-        throw std::runtime_error("Failed to read eventfd");
-    }
-
-    return true;
-}
 
 } // namespace Pistache

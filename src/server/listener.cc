@@ -45,9 +45,6 @@ namespace {
     }
 }
 
-using Polling::NotifyOn;
-
-
 void setSocketOptions(Fd fd, Flags<Options> options) {
     if (options.hasFlag(Options::ReuseAddr)) {
         int one = 1;
@@ -75,14 +72,14 @@ void setSocketOptions(Fd fd, Flags<Options> options) {
 Listener::Listener()
     : listen_fd(-1)
     , backlog_(Const::MaxBacklog)
-    , reactor_(Aio::Reactor::create())
+    , reactor_(Io::Reactor::create())
 { }
 
 Listener::Listener(const Address& address)
     : addr_(address)
     , listen_fd(-1)
     , backlog_(Const::MaxBacklog)
-    , reactor_(Aio::Reactor::create())
+    , reactor_(Io::Reactor::create())
 {
 }
 
@@ -141,6 +138,8 @@ Listener::bind() {
 
 bool
 Listener::bind(const Address& address) {
+    using namespace Io;
+
     if (!handler_)
         throw std::runtime_error("Call setHandler before calling bind()");
     addr_ = address;
@@ -190,7 +189,7 @@ Listener::bind(const Address& address) {
 
     transport_.reset(new Transport(handler_));
 
-    reactor_->init(Aio::AsyncContext(workers_));
+    reactor_->init(Io::AsyncContext(workers_));
     transportKey = reactor_->addHandler(transport_);
 
     return true;
@@ -203,6 +202,8 @@ Listener::isBound() const {
 
 void
 Listener::run() {
+    using namespace Io;
+
     reactor_->run();
 
     for (;;) {

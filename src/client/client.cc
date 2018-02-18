@@ -14,9 +14,6 @@
 
 
 namespace Pistache {
-
-using namespace Polling;
-
 namespace Http {
 
 namespace {
@@ -156,7 +153,7 @@ namespace {
 }
 
 void
-Transport::onReady(const Aio::FdSet& fds) {
+Transport::onReady(const Io::FdSet& fds) {
     for (const auto& entry: fds) {
         if (entry.getTag() == connectionsQueue.tag()) {
             handleConnectionQueue();
@@ -191,7 +188,7 @@ Transport::onReady(const Aio::FdSet& fds) {
                 else {
                     conn.resolve();
                     // We are connected, we can start reading data now
-                    reactor()->modifyFd(key(), conn.connection->fd, NotifyOn::Read);
+                    reactor()->modifyFd(key(), conn.connection->fd, Io::Polling::NotifyOn::Read);
                 }
             } else {
                 throw std::runtime_error("Unknown fd");
@@ -201,7 +198,7 @@ Transport::onReady(const Aio::FdSet& fds) {
 }
 
 void
-Transport::registerPoller(Polling::Epoll& poller) {
+Transport::registerPoller(Io::Polling::Poller& poller) {
     requestsQueue.bind(poller);
     connectionsQueue.bind(poller);
 }
@@ -241,6 +238,8 @@ void
 Transport::asyncSendRequestImpl(
         const RequestEntry& req, WriteStatus status)
 {
+    using namespace Io;
+
     auto buffer = req.buffer;
 
     auto cleanUp = [&]() {
@@ -262,7 +261,7 @@ Transport::asyncSendRequestImpl(
                 if (status == FirstTry) {
                     throw std::runtime_error("Unimplemented, fix me!");
                 }
-                reactor()->modifyFd(key(), fd, NotifyOn::Write, Polling::Mode::Edge);
+                reactor()->modifyFd(key(), fd, Polling::NotifyOn::Write, Polling::Mode::Edge);
             }
             else {
                 cleanUp();
@@ -300,6 +299,9 @@ Transport::handleRequestsQueue() {
 
 void
 Transport::handleConnectionQueue() {
+    using namespace Io;
+    using namespace Io::Polling;
+
     for (;;) {
         auto entry = connectionsQueue.popSafe();
         if (!entry) break;
@@ -750,7 +752,7 @@ Client::Options::maxConnectionsPerHost(int val) {
 }
 
 Client::Client()
-    : reactor_(Aio::Reactor::create())
+    : reactor_(Io::Reactor::create())
     , ioIndex(0)
 {
 }
@@ -776,7 +778,7 @@ void
 Client::init(const Client::Options& options) {
     pool.init(options.maxConnectionsPerHost_);
     transport_.reset(new Transport);
-    reactor_->init(Aio::AsyncContext(options.threads_));
+    reactor_->init(Io::AsyncContext(options.threads_));
     transportKey = reactor_->addHandler(transport_);
     reactor_->run();
 }

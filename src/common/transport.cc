@@ -13,10 +13,9 @@
 #include <pistache/tcp.h>
 #include <pistache/os.h>
 
-
 namespace Pistache {
 
-using namespace Polling;
+using namespace Io::Polling;
 
 namespace Tcp {
 
@@ -30,13 +29,13 @@ Transport::init(const std::shared_ptr<Tcp::Handler>& handler) {
     handler_->associateTransport(this);
 }
 
-std::shared_ptr<Aio::Handler>
+std::shared_ptr<Io::Handler>
 Transport::clone() const {
     return std::make_shared<Transport>(handler_->clone());
 }
 
 void
-Transport::registerPoller(Polling::Epoll& poller) {
+Transport::registerPoller(Io::Polling::Poller& poller) {
     writesQueue.bind(poller);
     timersQueue.bind(poller);
     peersQueue.bind(poller);
@@ -57,7 +56,9 @@ Transport::handleNewPeer(const std::shared_ptr<Tcp::Peer>& peer) {
 }
 
 void
-Transport::onReady(const Aio::FdSet& fds) {
+Transport::onReady(const Io::FdSet& fds) {
+    using namespace Io;
+
     for (const auto& entry: fds) {
         if (entry.getTag() == writesQueue.tag()) {
             handleWriteQueue();
@@ -98,7 +99,7 @@ Transport::onReady(const Aio::FdSet& fds) {
                 throw std::runtime_error("Assertion Error: could not find write data");
             }
 
-            reactor()->modifyFd(key(), fd, NotifyOn::Read, Polling::Mode::Edge);
+            reactor()->modifyFd(key(), fd, Polling::NotifyOn::Read, Polling::Mode::Edge);
 
             auto& write = it->second;
             asyncWriteImpl(fd, write, Retry);
@@ -217,7 +218,7 @@ Transport::asyncWriteImpl(
                         std::make_pair(fd,
                             WriteEntry(std::move(deferred), buffer.detach(totalWritten), flags)));
 
-                reactor()->modifyFd(key(), fd, NotifyOn::Read | NotifyOn::Write, Polling::Mode::Edge);
+                reactor()->modifyFd(key(), fd, NotifyOn::Read | NotifyOn::Write, Io::Polling::Mode::Edge);
             }
             else {
                 cleanUp();
@@ -255,6 +256,7 @@ Transport::armTimerMs(
 
 void
 Transport::armTimerMsImpl(TimerEntry entry) {
+    using namespace Io;
 
     auto it = timers.find(entry.fd);
     if (it != std::end(timers)) {
@@ -282,7 +284,7 @@ Transport::armTimerMsImpl(TimerEntry entry) {
         return;
     }
 
-    reactor()->registerFdOneShot(key(), entry.fd, NotifyOn::Read, Polling::Mode::Edge);
+    reactor()->registerFdOneShot(key(), entry.fd, Polling::NotifyOn::Read, Polling::Mode::Edge);
     timers.insert(std::make_pair(entry.fd, std::move(entry)));
 }
 
@@ -322,13 +324,15 @@ Transport::handlePeerQueue() {
 
 void
 Transport::handlePeer(const std::shared_ptr<Peer>& peer) {
+    using namespace Io;
+
     int fd = peer->fd();
     peers.insert(std::make_pair(fd, peer));
 
     peer->associateTransport(this);
 
     handler_->onConnection(peer);
-    reactor()->registerFd(key(), fd, NotifyOn::Read | NotifyOn::Shutdown, Polling::Mode::Edge);
+    reactor()->registerFd(key(), fd, Polling::NotifyOn::Read | NotifyOn::Shutdown, Polling::Mode::Edge);
 }
 
 void
@@ -378,11 +382,11 @@ Transport::isTimerFd(Fd fd) const {
 }
 
 bool
-Transport::isPeerFd(Polling::Tag tag) const {
+Transport::isPeerFd(Io::Polling::Tag tag) const {
     return isPeerFd(tag.value());
 }
 bool
-Transport::isTimerFd(Polling::Tag tag) const {
+Transport::isTimerFd(Io::Polling::Tag tag) const {
     return isTimerFd(tag.value());
 }
 
@@ -398,7 +402,7 @@ Transport::getPeer(Fd fd)
 }
 
 std::shared_ptr<Peer>&
-Transport::getPeer(Polling::Tag tag)
+Transport::getPeer(Io::Polling::Tag tag)
 {
     return getPeer(tag.value());
 }

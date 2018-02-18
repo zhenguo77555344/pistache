@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include <pistache/os.h>
+
 #include <pistache/reactor.h>
 
 namespace Pistache {
@@ -59,9 +60,9 @@ public:
         void disarm();
 
         void
-        registerReactor(const Aio::Reactor::Key& key, Aio::Reactor* reactor) {
+        registerReactor(const Io::Reactor::Key& key, Io::Reactor* reactor) {
             if (!registered) {
-                reactor->registerFd(key, fd, Polling::NotifyOn::Read);
+                reactor->registerFd(key, fd, Io::Polling::NotifyOn::Read);
                 registered = true;
             }
         }
