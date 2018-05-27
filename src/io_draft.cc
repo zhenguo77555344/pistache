@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <poll.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/time.h>
@@ -211,7 +212,7 @@ public:
     virtual void registerFd(Fd fd, Tag tag, Flags<NotifyOn> interest) = 0;
     virtual int poll(std::vector<Event>& events,
                      size_t maxEvents = 1024,
-                     std::chrono::milliseconds timeout = std::chrono::milliseconds(0)) const = 0;
+                     std::chrono::milliseconds timeout = std::chrono::milliseconds(0)) = 0;
 };
 
 bool operator==(Poller::Tag lhs, Poller::Tag rhs)
@@ -245,7 +246,7 @@ public:
 
     int poll(std::vector<Event>& events,
              size_t maxEvents = 1024,
-             std::chrono::milliseconds timeout = std::chrono::milliseconds(0)) const override
+             std::chrono::milliseconds timeout = std::chrono::milliseconds(0)) override
     {
 
         struct epoll_event evs[1024];
@@ -286,6 +287,7 @@ private:
 
         return events;
     }
+
     Flags<NotifyOn> toNotifyOn(int events) const
     {
         Flags<NotifyOn> flags;
@@ -304,6 +306,90 @@ private:
     }
 
     int epoll_fd;
+};
+
+class Poll : public Poller
+{
+public:
+    void registerFd(Fd fd, Tag tag, Flags<NotifyOn> interest) override
+    {
+        PollEntry entry(fd, tag);
+        entry.events = toPollEvents(interest);
+        fds.push_back(entry);
+    }
+
+    int poll(std::vector<Event>& events,
+             size_t maxEvents = 1024,
+             std::chrono::milliseconds timeout = std::chrono::milliseconds(0)) override
+    {
+        pollfd* pollfds = fds.data();
+        int ready_fds = -1;
+        do {
+            ready_fds = ::poll(pollfds, maxEvents, timeout.count());
+        } while (ready_fds < 0 && errno == EINTR);
+
+        if (ready_fds > 0) {
+            for (int i = 0; i < ready_fds; ++i) {
+                const struct pollfd *pfd = pollfds + i;
+                const auto* entry = static_cast<const PollEntry *>(pfd);
+
+                const Tag tag(entry->tag);
+
+                Event event(tag);
+                event.flags = toNotifyOn(entry->revents);
+                events.push_back(event);
+            }
+        }
+
+        return ready_fds;
+    }
+
+private:
+    struct PollEntry : pollfd
+    {
+        PollEntry(Fd fd, Tag tag)
+            : tag(tag)
+        {
+            this->fd = fd;
+        }
+
+        Tag tag;
+    };
+
+    static short toPollEvents(Flags<NotifyOn> interest)
+    {
+        short events = 0;
+
+        if (interest.hasFlag(NotifyOn::Read))
+            events |= POLLIN;
+        if (interest.hasFlag(NotifyOn::Write))
+            events |= POLLOUT;
+        if (interest.hasFlag(NotifyOn::Hangup))
+            events |= POLLHUP;
+        if (interest.hasFlag(NotifyOn::Shutdown))
+            events |= POLLRDHUP;
+
+        return events;
+    }
+
+    static Flags<NotifyOn> toNotifyOn(int events)
+    {
+        Flags<NotifyOn> flags;
+
+        if (events & POLLIN)
+            flags.setFlag(NotifyOn::Read);
+        if (events & POLLOUT)
+            flags.setFlag(NotifyOn::Write);
+        if (events & POLLHUP)
+            flags.setFlag(NotifyOn::Hangup);
+        if (events & POLLRDHUP) {
+            flags.setFlag(NotifyOn::Shutdown);
+        }
+
+        return flags;
+    }
+
+    std::vector<PollEntry> fds;
 };
 
 class Evented
@@ -395,73 +481,152 @@ private:
     std::shared_ptr<Handler> handler_;
 };
 
-// For allocation, Pistache should have a range of reserved tags. User tags should not be able to use tags from that
-// range
+class Listener;
+
 template<typename T>
-class TagAllocator
+class Pool
 {
 public:
-    TagAllocator(uint64_t initialValue = 1)
-        : start(initialValue)
-        , next(initialValue)
+
+    static_assert(std::is_base_of<Evented, T>::value, "T must inherit from Evented");
+
+    struct Key
     {
+        friend class Pool<T>;
+
+    private:
+        Key(uint64_t value)
+            : value(value)
+        {
+        }
+
+        uint64_t value;
+    };
+
+    Pool(size_t start = 0, size_t capacity = 0)
+        : start(start)
+        , next(0)
+    {
+        reserve(capacity);
     }
 
-    void reserve(size_t size)
+    void reserve(size_t capacity)
     {
-        entries.reserve(size);
+        if (capacity > 0)
+            entries.reserve(capacity);
     }
 
     template<typename... Args>
-    Poller::Tag allocate(Args&& ...args)
+    Key allocate(Args&& ...args)
     {
-        auto slot = next++;
-        Poller::Tag tag(slot);
+        auto index = next;
+        auto key = makeKey(index);
 
-        auto value = std::make_shared<T>(tag, std::forward<Args>(args)...);
-        entries.push_back(Entry(value, State::Used));
-        return tag;
+        if (index == entries.size())
+        {
+            entries.emplace_back();
+            auto& entry = entries.back();
+            entry.construct(makeTag(key), std::forward<Args>(args)...);
+            entry.state = State::Occupied;
+            ++next;
+        }
+        else
+        {
+            auto& entry = entries[next];
+            entry.construct(makeTag(key), std::forward<Args>(args)...);
+            entry.state = State::Occupied;
+        }
+
+        return key;
     }
 
-    std::shared_ptr<T> get(Poller::Tag tag) const
+    void release(Key key)
     {
-        auto index = tag.value() - start;
-        if (index >= next)
+        auto index = getIndex(key);
+        if (index >= entries.size())
+            return;
+
+        auto& entry = entries[index];
+        if (entry.state == State::Occupied)
+        {
+            entry.destroy();
+            next = index;
+        }
+    }
+
+    T* get(Key key) const
+    {
+        auto index = getIndex(key);
+
+        if (index >= entries.size())
             return nullptr;
 
-        return entries[index].value;
+        const auto& entry = entries[key.value - start];
+        if (entry.state != State::Occupied)
+            return nullptr;
+
+        return entry.value();
     }
 
+    T* get(uint64_t value) const
+    {
+        return get(Key(value));
+    }
+    
 private:
     enum class State
     {
-        Idle, Used
+        Occupied,
+        Free
     };
 
     struct Entry
     {
-        Entry()
-            : value(nullptr)
-            , state(State::Idle)
-        {
-        }
+        using Storage = typename std::aligned_storage<sizeof(T), alignof(T)>::type;
 
-        Entry(std::shared_ptr<T> value, State state)
-            : value(value)
-            , state(state)
-        {
-        }
-
-        std::shared_ptr<T> value;
+        Storage storage;
         State state;
+
+        template<typename... Args>
+        void construct(Args&& ...args)
+        {
+            ::new (&storage) T(std::forward<Args>(args)...);
+        }
+
+        void destroy()
+        {
+            value()->~T();
+            state = State::Free;
+        }
+
+        T* value() const
+        {
+            return reinterpret_cast<T *>(&const_cast<Entry *>(this)->storage);
+        }
     };
 
     std::vector<Entry> entries;
+
+    uint64_t getIndex(Key key) const
+    {
+        return key.value - start;
+    }
+
+    Key makeKey(uint64_t index) const
+    {
+        return Key(index + start);
+    }
+
+    static Poller::Tag makeTag(Key key)
+    {
+        return Poller::Tag(key.value);
+    }
+
     uint64_t start;
     uint64_t next;
 };
 
-class Listener;
+using SocketPool = Pool<Socket>;
 
 class Transport : public Reactor::Handler
 {
@@ -484,12 +649,13 @@ public:
     friend class Transport;
 
     static constexpr auto Tag = Poller::Tag(1);
+    static constexpr size_t MaxSockets = 10000;
 
     Listener(Reactor& reactor)
         : Evented(Tag)
         , reactor(reactor)
         , transport(std::make_shared<Transport>(reactor, this))
-        , socketAllocator(Tag.value() + 1)
+        , socketPool(Tag.value() + 1, MaxSockets)
     {
         reactor.setHandler(transport);
     }
@@ -543,7 +709,7 @@ public:
         return true;
     }
 
-    std::shared_ptr<Socket> accept()
+    Socket* accept()
     {
         struct sockaddr_in peer_addr;
         socklen_t peer_addr_len = sizeof(peer_addr);
@@ -553,11 +719,8 @@ public:
         }
 
         make_non_blocking(client_fd);
-        auto tag = socketAllocator.allocate(client_fd);
-        auto socket = socketAllocator.get(tag);
-
-        std::cout << "Connection accepted from Fd(" << client_fd << ")\n";
-        return socket;
+        auto key = socketPool.allocate(client_fd);
+        return socketPool.get(key);
     }
 
 
@@ -566,11 +729,11 @@ private:
 
     std::shared_ptr<Transport> transport;
     Fd listen_fd;
-    TagAllocator<Socket> socketAllocator;
+    SocketPool socketPool;
 
-    std::shared_ptr<Socket> socket(Poller::Tag tag) const
+    Socket* socket(Poller::Tag tag) const
     {
-        return socketAllocator.get(tag);
+        return socketPool.get(tag.value());
     }
 };
 
@@ -578,10 +741,8 @@ constexpr Poller::Tag Listener::Tag;
 
 void Transport::handleEvent(std::vector<Poller::Event> events)
 {
-
     for (const auto& event: events)
     {
-        std::cout << "Event occured on Tag(" << event.tag.value() << ")\n";
         if (event.tag == Listener::Tag)
         {
             auto socket = listener_->accept();
@@ -600,19 +761,13 @@ void Transport::handleEvent(std::vector<Poller::Event> events)
     }
 }
 
-
 int main()
 {
     Reactor reactor;
     Listener listener(reactor);
+    listener.bind();
 
-    if (!listener.bind())
-    {
-        std::cout << "Failed to bind!\n";
-        exit(1);
-    }
     reactor.registerEvented(listener);
 
-    std::cout << "Listening on 0.0.0.0:12345\n";
     reactor.run();
 }
